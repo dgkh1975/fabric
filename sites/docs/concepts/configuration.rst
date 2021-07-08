@@ -46,9 +46,9 @@ Default configuration values
 Overrides of Invoke-level defaults
 ----------------------------------
 
-- ``run.replace_env``: ``True``, instead of ``False``, so that remote commands
-  run with a 'clean', empty environment instead of inheriting a copy of the
-  current process' environment.
+- ``run.replace_env``: defaults to ``True``, instead of ``False``, so that
+  remote commands run with a 'clean', empty environment instead of inheriting
+  a copy of the current process' environment.
 
   This is for security purposes: leaking local environment data remotely by
   default would be unsanitary. It's also compatible with the behavior of
@@ -56,6 +56,11 @@ Overrides of Invoke-level defaults
 
   .. seealso::
     The warning under `paramiko.channel.Channel.set_environment_variable`.
+
+  .. note::
+    This is currently accomplished with a keyword argument override, as the
+    config setting itself was applying to both ``run`` and ``local``. Future
+    updates will ensure the two methods use separate config values.
 
 Extensions to Invoke-level defaults
 -----------------------------------

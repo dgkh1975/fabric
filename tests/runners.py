@@ -3,12 +3,12 @@ try:
 except ImportError:
     from six import StringIO
 
-from mock import Mock
+from mock import Mock, patch
 from pytest import skip  # noqa
 
 from invoke import pty_size, Result
 
-from fabric import Config, Connection, Remote
+from fabric import Config, Connection, Remote, RemoteShell
 
 
 # On most systems this will explode if actually executed as a shell command;
@@ -30,6 +30,19 @@ class Remote_:
         c = _Connection("host")
         assert Remote(context=c).context is c
 
+    class env:
+        def replaces_when_replace_env_True(self, remote):
+            env = _runner().run(CMD, env={"JUST": "ME"}, replace_env=True).env
+            assert env == {"JUST": "ME"}
+
+        def augments_when_replace_env_False(self, remote):
+            env = _runner().run(CMD, env={"JUST": "ME"}, replace_env=False).env
+            assert (
+                "PATH" in env
+            )  # assuming this will be in every test environment
+            assert "JUST" in env
+            assert env["JUST"] == "ME"
+
     class run:
         def calls_expected_paramiko_bits(self, remote):
             # remote mocking makes generic sanity checks like "were
@@ -43,12 +56,6 @@ class Remote_:
             fakeout = StringIO()
             _runner().run(CMD, out_stream=fakeout)
             assert fakeout.getvalue() == "hello yes this is dog"
-
-        def pty_True_uses_paramiko_get_pty(self, remote):
-            chan = remote.expect()
-            _runner().run(CMD, pty=True)
-            cols, rows = pty_size()
-            chan.get_pty.assert_called_with(width=cols, height=rows)
 
         def return_value_is_Result_subclass_exposing_cxn_used(self, remote):
             c = _Connection("host")
@@ -107,6 +114,36 @@ class Remote_:
             else:
                 assert False, "Weird, Oops never got raised..."
 
+        class pty_True:
+            def uses_paramiko_get_pty_with_local_size(self, remote):
+                chan = remote.expect()
+                _runner().run(CMD, pty=True)
+                cols, rows = pty_size()
+                chan.get_pty.assert_called_with(width=cols, height=rows)
+
+            @patch("fabric.runners.signal")
+            def no_SIGWINCH_means_no_handler(self, signal, remote):
+                delattr(signal, "SIGWINCH")
+                remote.expect()
+                _runner().run(CMD, pty=True)
+                assert not signal.signal.called
+
+            @patch("fabric.runners.signal")
+            def SIGWINCH_handled_when_present(self, signal, remote):
+                remote.expect()
+                runner = _runner()
+                runner.run(CMD, pty=True)
+                signal.signal.assert_called_once_with(
+                    signal.SIGWINCH, runner.handle_window_change
+                )
+
+            def window_change_handler_uses_resize_pty(self):
+                runner = _runner()
+                runner.channel = Mock()
+                runner.handle_window_change(None, None)
+                cols, rows = pty_size()
+                runner.channel.resize_pty.assert_called_once_with(cols, rows)
+
         # TODO: how much of Invoke's tests re: the upper level run() (re:
         # things like returning Result, behavior of Result, etc) to
         # duplicate here? Ideally none or very few core ones.
@@ -133,8 +170,22 @@ class Remote_:
             r.run(CMD, env={"PATH": "/opt/bin", "DEBUG": "1"})
             assert not chan.update_environment.called
 
+    def send_start_message_sends_exec_command(self):
+        runner = Remote(context=None)
+        runner.channel = Mock()
+        runner.send_start_message(command="whatever")
+        runner.channel.exec_command.assert_called_once_with("whatever")
+
     def kill_closes_the_channel(self):
         runner = _runner()
         runner.channel = Mock()
         runner.kill()
         runner.channel.close.assert_called_once_with()
+
+
+class RemoteShell_:
+    def send_start_message_sends_invoke_shell(self):
+        runner = RemoteShell(context=None)
+        runner.channel = Mock()
+        runner.send_start_message(command=None)
+        runner.channel.invoke_shell.assert_called_once_with()
